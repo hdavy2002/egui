@@ -492,6 +492,7 @@ impl Painter {
         color: crate::Color32,
         wrap_width: f32,
     ) -> Arc<Galley> {
+        let text = epaint::text::display_names::display_string(text); // Davy Labs
         self.fonts_mut(|f| f.layout(text, font_id, color, wrap_width))
     }
 
@@ -506,6 +507,7 @@ impl Painter {
         font_id: FontId,
         color: crate::Color32,
     ) -> Arc<Galley> {
+        let text = epaint::text::display_names::display_string(text); // Davy Labs
         self.fonts_mut(|f| f.layout(text, font_id, color, f32::INFINITY))
     }
 

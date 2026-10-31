@@ -4427,7 +4427,8 @@ fn process_viewport_command(
             }
         }
         ViewportCommand::Title(title) => {
-            window.set_title(&title);
+            // Davy Labs: display-name filter.
+            window.set_title(&egui::epaint::text::display_names::display_str(&title));
         }
         ViewportCommand::Transparent(v) => window.set_transparent(v),
         ViewportCommand::Visible(v) => {
@@ -4738,7 +4739,9 @@ pub fn create_winit_window_attributes(
     } = viewport_builder;
 
     let mut window_attributes = winit::window::WindowAttributes::default()
-        .with_title(title.unwrap_or_else(|| "egui window".to_owned()))
+        .with_title(egui::epaint::text::display_names::display_string(
+            title.unwrap_or_else(|| "egui window".to_owned()),
+        ))
         .with_transparent(transparent.unwrap_or(false))
         .with_decorations(decorations.unwrap_or(true))
         .with_resizable(resizable.unwrap_or(true))

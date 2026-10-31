@@ -2,6 +2,7 @@
 
 mod caret;
 pub mod cursor;
+pub mod display_names;
 mod face_store;
 mod family;
 mod font_data;

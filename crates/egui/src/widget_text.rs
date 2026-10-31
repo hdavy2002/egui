@@ -780,6 +780,20 @@ impl WidgetText {
         fallback_font: FontSelection,
         default_valign: Align,
     ) -> Arc<LayoutJob> {
+        // Davy Labs: display-name filter (upstream product names → ours).
+        let mut job = self.into_layout_job_unfiltered(style, fallback_font, default_valign);
+        if epaint::text::display_names::would_change(&job.text) {
+            epaint::text::display_names::display_job(Arc::make_mut(&mut job));
+        }
+        job
+    }
+
+    fn into_layout_job_unfiltered(
+        self,
+        style: &Style,
+        fallback_font: FontSelection,
+        default_valign: Align,
+    ) -> Arc<LayoutJob> {
         match self {
             Self::Text(text) => Arc::new(LayoutJob::simple_format(
                 text,
@@ -883,6 +897,7 @@ impl WidgetText {
                 );
                 layout_job.wrap = text_wrapping;
                 layout_job.language = layout_job.language.or(language);
+                epaint::text::display_names::display_job(&mut layout_job); // Davy Labs
                 ctx.fonts_mut(|f| f.layout_job(layout_job))
             }
             Self::RichText(text) => {
@@ -893,12 +908,14 @@ impl WidgetText {
                 );
                 layout_job.wrap = text_wrapping;
                 layout_job.language = layout_job.language.or(language);
+                epaint::text::display_names::display_job(&mut layout_job); // Davy Labs
                 ctx.fonts_mut(|f| f.layout_job(layout_job))
             }
             Self::LayoutJob(job) => {
                 let mut job = Arc::unwrap_or_clone(job);
                 job.wrap = text_wrapping;
                 job.language = job.language.or(language);
+                epaint::text::display_names::display_job(&mut job); // Davy Labs
                 ctx.fonts_mut(|f| f.layout_job(job))
             }
             Self::Galley(galley) => galley,
@@ -1028,5 +1045,47 @@ mod tests {
     #[test]
     fn ensure_small_widget_text() {
         assert_eq!(size_of::<WidgetText>(), size_of::<String>());
+    }
+}
+
+/// Davy Labs: the display-name filter applies to drawn text, not to edited text.
+#[cfg(test)]
+mod davylabs_display_names {
+    use crate::{Context, RawInput, RichText, TextEdit, WidgetText};
+
+    #[test]
+    fn labels_painter_and_text_edit() {
+        let ctx = Context::default();
+        let mut output = ctx.run_ui(RawInput::default(), |ui| {
+            let galley = WidgetText::from("About PhotoCraft").into_galley(
+                ui,
+                None,
+                f32::INFINITY,
+                crate::TextStyle::Body,
+            );
+            assert_eq!(galley.text(), "About Photo Lab");
+
+            let job = WidgetText::from(RichText::new("ArtCraft").strong()).into_layout_job(
+                ui.style(),
+                crate::FontSelection::Default,
+                crate::Align::Min,
+            );
+            assert_eq!(job.text, "Davy Labs");
+
+            let galley = ui.painter().layout_no_wrap(
+                "Deck Lab".to_owned(),
+                crate::FontId::proportional(12.0),
+                crate::Color32::WHITE,
+            );
+            assert_eq!(galley.text(), "Power Lab");
+
+            let mut buffer = String::from("PhotoCraft");
+            let output = TextEdit::singleline(&mut buffer)
+                .hint_text("GridCraft")
+                .show(ui);
+            assert_eq!(output.galley.text(), "PhotoCraft");
+            assert_eq!(buffer, "PhotoCraft");
+        });
+        output.textures_delta.clear();
     }
 }
