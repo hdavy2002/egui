@@ -31,6 +31,7 @@ const ENGINES: &[(&[&str], &str)] = &[
     (&["Design"], "Design Lab"),
     (&["Fig"], "Fig Lab"),
     (&["CAD", "Cad"], "CAD Lab"),
+    (&["Texture"], "Texture Lab"),
     (&["Art"], "Davy Labs"),
 ];
 
@@ -269,6 +270,7 @@ mod tests {
     #[test]
     fn names_are_replaced() {
         assert_eq!(display_str("About PhotoCraft"), "About Photo Lab");
+        assert_eq!(display_str("About TextureCraft"), "About Texture Lab");
         assert_eq!(display_str("Photocraft 0.18"), "Photo Lab 0.18");
         assert_eq!(display_str("PdfCraft and PDFCraft"), "PDF Lab and PDF Lab");
         assert_eq!(display_str("DeckCraft"), "Power Lab");
