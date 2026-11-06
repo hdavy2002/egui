@@ -1,60 +1,90 @@
 //! Davy Labs: display-name filter.
 //!
-//! The Davy Labs apps are built from open-source engines whose upstream product names
+//! The Papaya Seeds are built from open-source engines whose upstream product names
 //! (`PhotoCraft`, `ArtCraft`, …) can still turn up in text that the app shows, for example
 //! in a message coming from a shared library. This module rewrites those names to the
-//! Davy Labs names in text that is laid out *for display only*. egui calls it from
+//! Papaya names in text that is laid out *for display only*. egui calls it from
 //! [`WidgetText`](https://docs.rs/egui/latest/egui/enum.WidgetText.html) layout and from
 //! the `Painter::layout*` helpers. It is never applied to the editable buffer of a text
 //! edit, and it never changes stored data: it only changes what gets drawn.
 //!
-//! Text without any of the needles (`Craft`, `craft`, `CRAFT`, `Deck Lab`, `DECK LAB`) is
-//! returned unchanged without allocating. Results for matching strings are cached.
+//! It also rewrites the *previous* Davy Labs names (`Photo Lab`, `Davy Labs`, …), because
+//! each fork's own `davylabs.rs` strings still say `<X> Lab` until that fork is updated.
+//!
+//! Text without any of the needles (`Craft`, `craft`, `CRAFT`, `Lab`, `LAB`) is returned
+//! unchanged without allocating. Results for matching strings are cached.
 
 use alloc::{borrow::Cow, string::String, sync::Arc, vec::Vec};
 use core::cell::RefCell;
 
 use super::{ByteIndex, LayoutJob};
 
-/// `(prefix as written upstream, Davy Labs name)`. `Art` is the suite (`ArtCraft`).
+/// `(prefix as written upstream, Papaya name)`. `Art` is the suite (`ArtCraft`).
 const ENGINES: &[(&[&str], &str)] = &[
-    (&["Photo"], "Photo Lab"),
-    (&["Vector"], "Vector Lab"),
-    (&["Pdf", "PDF"], "PDF Lab"),
-    (&["Word"], "Word Lab"),
-    (&["Deck"], "Power Lab"),
-    (&["Grid"], "Grid Lab"),
-    (&["Film"], "Film Lab"),
-    (&["Sound"], "Sound Lab"),
-    (&["Light"], "Light Lab"),
-    (&["Effect"], "Effect Lab"),
-    (&["Design"], "Design Lab"),
-    (&["Fig"], "Fig Lab"),
-    (&["CAD", "Cad"], "CAD Lab"),
-    (&["Texture"], "Texture Lab"),
-    (&["Art"], "Davy Labs"),
+    (&["Photo"], "PhotoSeed"),
+    (&["Vector"], "VectorSeed"),
+    (&["Pdf", "PDF"], "PDFSeed"),
+    (&["Word"], "WordSeed"),
+    (&["Deck"], "PowerSeed"),
+    (&["Grid"], "GridSeed"),
+    (&["Film"], "FilmSeed"),
+    (&["Sound"], "SoundSeed"),
+    (&["Light"], "LightSeed"),
+    (&["Effect"], "EffectSeed"),
+    (&["Design"], "DesignSeed"),
+    (&["Fig"], "FigSeed"),
+    (&["CAD", "Cad"], "CADSeed"),
+    (&["Texture"], "TextureSeed"),
+    (&["Art"], "Papaya"),
 ];
 
-/// Replacements that are not `<Engine>Craft`.
+/// `(name we used to show, Papaya name)`, for the 16 Seeds.
+///
+/// Each fork's own `davylabs.rs` still writes `<X> Lab` until it is rebranded, and so do
+/// strings the forks have already baked into saved documents and shared libraries, so the
+/// filter has to carry the old names too. `Deck Lab` is here because the Deck engine's app
+/// was shown that way before it became `Power Lab`. An `ALL CAPS` variant of every entry
+/// is generated as well.
+const LAB_NAMES: &[(&str, &str)] = &[
+    ("Illustrate Lab", "IllustrateSeed"),
+    ("Texture Lab", "TextureSeed"),
+    ("Vector Lab", "VectorSeed"),
+    ("Design Lab", "DesignSeed"),
+    ("Effect Lab", "EffectSeed"),
+    ("Photo Lab", "PhotoSeed"),
+    ("Power Lab", "PowerSeed"),
+    ("Sound Lab", "SoundSeed"),
+    ("Light Lab", "LightSeed"),
+    ("Voice Lab", "VoiceSeed"),
+    ("Word Lab", "WordSeed"),
+    ("Grid Lab", "GridSeed"),
+    ("Film Lab", "FilmSeed"),
+    ("Deck Lab", "PowerSeed"),
+    ("PDF Lab", "PDFSeed"),
+    ("CAD Lab", "CADSeed"),
+    ("Fig Lab", "FigSeed"),
+];
+
+/// Replacements that are neither `<Engine>Craft` nor `<X> Lab`.
 const EXTRA: &[(&str, &str)] = &[
-    ("getartcraft.com", "davylabs.dev"),
-    ("getartcraft", "davylabs"),
-    ("Crafting Apps", "Davy Labs apps"),
-    ("Crafting apps", "Davy Labs apps"),
-    ("Craft Apps", "Davy Labs apps"),
-    ("Craft apps", "Davy Labs apps"),
-    ("CRAFTING APPS", "DAVY LABS APPS"),
-    ("CRAFT APPS", "DAVY LABS APPS"),
-    ("Deck Lab", "Power Lab"),
-    ("DECK LAB", "POWER LAB"),
+    ("getartcraft.com", "papayaos.app"),
+    ("getartcraft", "papayaos"),
+    ("Crafting Apps", "Papaya apps"),
+    ("Crafting apps", "Papaya apps"),
+    ("Craft Apps", "Papaya apps"),
+    ("Craft apps", "Papaya apps"),
+    ("CRAFTING APPS", "PAPAYA APPS"),
+    ("CRAFT APPS", "PAPAYA APPS"),
+    ("Davy Labs", "Papaya"),
+    ("DAVY LABS", "PAPAYA"),
 ];
 
 /// Spellings that are left alone on purpose.
 ///
 /// `Soundcraft` is a real audio hardware brand (mixers, USB audio interfaces), so a device
 /// name like "Soundcraft Signature 12" must keep its name. Upstream writes its app
-/// `SoundCraft`, which is still replaced. All-lowercase spellings (`photocraft`) are never
-/// replaced either: they are file extensions, ids and URLs.
+/// `SoundCraft`, which is still replaced. All-lowercase spellings (`photocraft`, `davylabs`)
+/// are never replaced either: they are file extensions, ids and URLs.
 const KEEP: &[&str] = &["Soundcraft"];
 
 /// Cheap test: can `text` contain anything we replace?
@@ -63,8 +93,8 @@ fn has_needle(text: &str) -> bool {
     text.contains("Craft")
         || text.contains("craft")
         || text.contains("CRAFT")
-        || text.contains("Deck Lab")
-        || text.contains("DECK LAB")
+        || text.contains("Lab")
+        || text.contains("LAB")
 }
 
 /// All `(from, to)` pairs, longest `from` first so that a longer name wins at a position.
@@ -91,6 +121,23 @@ fn patterns() -> &'static [(String, String)] {
                     if !out.iter().any(|(f, _)| *f == from) {
                         out.push((from, to));
                     }
+                }
+            }
+        }
+        for (from, to) in LAB_NAMES {
+            for upper in [false, true] {
+                let from = if upper {
+                    from.to_uppercase()
+                } else {
+                    (*from).to_owned()
+                };
+                let to = if upper {
+                    to.to_uppercase()
+                } else {
+                    (*to).to_owned()
+                };
+                if !out.iter().any(|(f, _)| *f == from) {
+                    out.push((from, to));
                 }
             }
         }
@@ -212,7 +259,7 @@ pub fn would_change(text: &str) -> bool {
     lookup(text).is_some()
 }
 
-/// The display form of `text`: upstream product names replaced by Davy Labs names.
+/// The display form of `text`: upstream and old Davy Labs names replaced by Papaya names.
 ///
 /// Borrows (no allocation) when nothing needs replacing.
 pub fn display_str(text: &str) -> Cow<'_, str> {
@@ -269,37 +316,101 @@ mod tests {
 
     #[test]
     fn names_are_replaced() {
-        assert_eq!(display_str("About PhotoCraft"), "About Photo Lab");
-        assert_eq!(display_str("About TextureCraft"), "About Texture Lab");
-        assert_eq!(display_str("Photocraft 0.18"), "Photo Lab 0.18");
-        assert_eq!(display_str("PdfCraft and PDFCraft"), "PDF Lab and PDF Lab");
-        assert_eq!(display_str("DeckCraft"), "Power Lab");
-        assert_eq!(display_str("Deck Lab"), "Power Lab");
-        assert_eq!(display_str("CADCraft / CadCraft"), "CAD Lab / CAD Lab");
-        assert_eq!(display_str("PHOTOCRAFT"), "PHOTO LAB");
+        assert_eq!(display_str("About PhotoCraft"), "About PhotoSeed");
+        assert_eq!(display_str("About TextureCraft"), "About TextureSeed");
+        assert_eq!(display_str("Photocraft 0.18"), "PhotoSeed 0.18");
+        assert_eq!(display_str("PdfCraft and PDFCraft"), "PDFSeed and PDFSeed");
+        assert_eq!(display_str("DeckCraft"), "PowerSeed");
+        assert_eq!(display_str("CADCraft / CadCraft"), "CADSeed / CADSeed");
         assert_eq!(
             display_str("Part of ArtCraft, see getartcraft.com"),
-            "Part of Davy Labs, see davylabs.dev"
+            "Part of Papaya, see papayaos.app"
         );
         assert_eq!(
             display_str("https://www.getartcraft.com/apps"),
-            "https://www.davylabs.dev/apps"
+            "https://www.papayaos.app/apps"
         );
-        assert_eq!(display_str("All Crafting Apps"), "All Davy Labs apps");
-        assert_eq!(display_str("ArtCraft apps"), "Davy Labs apps");
-        assert_eq!(display_str("Open in VectorCraft…"), "Open in Vector Lab…");
+        assert_eq!(display_str("All Crafting Apps"), "All Papaya apps");
+        assert_eq!(display_str("ArtCraft apps"), "Papaya apps");
+        assert_eq!(display_str("Open in VectorCraft…"), "Open in VectorSeed…");
+        // Every `<X>Craft` in the table.
         for (from, to) in [
-            ("WordCraft", "Word Lab"),
-            ("GridCraft", "Grid Lab"),
-            ("FilmCraft", "Film Lab"),
-            ("SoundCraft", "Sound Lab"),
-            ("LightCraft", "Light Lab"),
-            ("EffectCraft", "Effect Lab"),
-            ("DesignCraft", "Design Lab"),
-            ("FigCraft", "Fig Lab"),
+            ("PhotoCraft", "PhotoSeed"),
+            ("VectorCraft", "VectorSeed"),
+            ("PdfCraft", "PDFSeed"),
+            ("PDFCraft", "PDFSeed"),
+            ("WordCraft", "WordSeed"),
+            ("DeckCraft", "PowerSeed"),
+            ("GridCraft", "GridSeed"),
+            ("FilmCraft", "FilmSeed"),
+            ("SoundCraft", "SoundSeed"),
+            ("LightCraft", "LightSeed"),
+            ("EffectCraft", "EffectSeed"),
+            ("DesignCraft", "DesignSeed"),
+            ("FigCraft", "FigSeed"),
+            ("CADCraft", "CADSeed"),
+            ("CadCraft", "CADSeed"),
+            ("TextureCraft", "TextureSeed"),
+            ("ArtCraft", "Papaya"),
         ] {
-            assert_eq!(display_str(from), to);
+            assert_eq!(display_str(from), to, "{from}");
         }
+    }
+
+    /// The forks' own `davylabs.rs` strings still say `<X> Lab`: rewrite those too.
+    #[test]
+    fn old_lab_names_are_replaced() {
+        for (from, to) in [
+            ("Photo Lab", "PhotoSeed"),
+            ("Vector Lab", "VectorSeed"),
+            ("PDF Lab", "PDFSeed"),
+            ("Word Lab", "WordSeed"),
+            ("Power Lab", "PowerSeed"),
+            ("Deck Lab", "PowerSeed"),
+            ("Grid Lab", "GridSeed"),
+            ("Film Lab", "FilmSeed"),
+            ("Sound Lab", "SoundSeed"),
+            ("Light Lab", "LightSeed"),
+            ("Effect Lab", "EffectSeed"),
+            ("Design Lab", "DesignSeed"),
+            ("Fig Lab", "FigSeed"),
+            ("CAD Lab", "CADSeed"),
+            ("Texture Lab", "TextureSeed"),
+            ("Illustrate Lab", "IllustrateSeed"),
+            ("Voice Lab", "VoiceSeed"),
+        ] {
+            assert_eq!(display_str(from), to, "{from}");
+            assert_eq!(
+                display_str(&alloc::format!("About {from}")),
+                alloc::format!("About {to}"),
+                "{from}"
+            );
+        }
+        assert_eq!(display_str("Davy Labs"), "Papaya");
+        assert_eq!(display_str("Photo Lab by Davy Labs"), "PhotoSeed by Papaya");
+    }
+
+    #[test]
+    fn upper_case_is_replaced() {
+        assert_eq!(display_str("PHOTOCRAFT"), "PHOTOSEED");
+        assert_eq!(display_str("ARTCRAFT"), "PAPAYA");
+        assert_eq!(display_str("PDFCRAFT"), "PDFSEED");
+        assert_eq!(display_str("ALL CRAFTING APPS"), "ALL PAPAYA APPS");
+        assert_eq!(display_str("PHOTO LAB"), "PHOTOSEED");
+        assert_eq!(display_str("DECK LAB"), "POWERSEED");
+        assert_eq!(display_str("ILLUSTRATE LAB"), "ILLUSTRATESEED");
+        assert_eq!(display_str("DAVY LABS"), "PAPAYA");
+    }
+
+    /// Longest match first: `Illustrate Lab` must not become `IllustrateSeed`'s prefix
+    /// plus a stray ` Lab`, and `TextureCraft` must not match `Texture` alone.
+    #[test]
+    fn longest_match_wins() {
+        assert_eq!(display_str("Illustrate Lab"), "IllustrateSeed");
+        assert_eq!(
+            display_str("Texture Lab and TextureCraft"),
+            "TextureSeed and TextureSeed"
+        );
     }
 
     #[test]
@@ -307,22 +418,46 @@ mod tests {
         // File extensions, ids and URLs are lowercase: untouched.
         assert_eq!(display_str("file.photocraft"), "file.photocraft");
         assert_eq!(display_str("photocraft://open"), "photocraft://open");
+        assert_eq!(display_str("davylabs-photo"), "davylabs-photo");
         // A real hardware brand.
         assert_eq!(
             display_str("Soundcraft Signature 12"),
             "Soundcraft Signature 12"
         );
-        // Already ours: idempotent.
-        assert_eq!(
-            display_str("Photo Lab by Davy Labs"),
-            "Photo Lab by Davy Labs"
-        );
+        // Words that merely contain a needle.
+        assert_eq!(display_str("Label the Laboratory"), "Label the Laboratory");
+    }
+
+    /// The new names must not be rewritten a second time.
+    #[test]
+    fn already_ours_is_idempotent() {
+        for text in [
+            "PhotoSeed",
+            "PhotoSeed by Papaya",
+            "PDFSeed",
+            "PowerSeed",
+            "IllustrateSeed",
+            "VoiceSeed",
+            "PHOTOSEED",
+            "Papaya",
+            "Part of Papaya, see papayaos.app",
+            "All Papaya apps",
+        ] {
+            assert_eq!(display_str(text), text, "{text}");
+            // And once more through the filter, for good measure.
+            assert_eq!(display_str(&display_str(text)), text, "{text}");
+        }
+        // Every mapping's output survives a second pass unchanged.
+        for (_, to) in patterns() {
+            assert_eq!(&*display_str(to), to.as_str(), "{to}");
+        }
     }
 
     #[test]
     fn non_ascii_around_names() {
-        assert_eq!(display_str("«PhotoCraft» — ✓"), "«Photo Lab» — ✓");
-        assert_eq!(display_str("日本語ArtCraft日本語"), "日本語Davy Labs日本語");
+        assert_eq!(display_str("«PhotoCraft» — ✓"), "«PhotoSeed» — ✓");
+        assert_eq!(display_str("日本語ArtCraft日本語"), "日本語Papaya日本語");
+        assert_eq!(display_str("日本語Photo Lab日本語"), "日本語PhotoSeed日本語");
     }
 
     #[test]
@@ -340,13 +475,13 @@ mod tests {
         job.append("PhotoCraft", 0.0, fmt(Color32::GREEN));
         job.append(" by ArtCraft!", 0.0, fmt(Color32::BLUE));
         display_job(&mut job);
-        assert_eq!(job.text, "Welcome to Photo Lab by Davy Labs!");
+        assert_eq!(job.text, "Welcome to PhotoSeed by Papaya!");
         let parts: Vec<&str> = job
             .sections
             .iter()
             .map(|s| &job.text[s.byte_range.start.0..s.byte_range.end.0])
             .collect();
-        assert_eq!(parts, ["Welcome to ", "Photo Lab", " by Davy Labs!"]);
+        assert_eq!(parts, ["Welcome to ", "PhotoSeed", " by Papaya!"]);
     }
 
     #[test]
@@ -355,7 +490,7 @@ mod tests {
         job.append("Photo", 0.0, fmt(Color32::RED));
         job.append("Craft rocks", 0.0, fmt(Color32::GREEN));
         display_job(&mut job);
-        assert_eq!(job.text, "Photo Lab rocks");
+        assert_eq!(job.text, "PhotoSeed rocks");
         let ranges: Vec<_> = job
             .sections
             .iter()
@@ -368,7 +503,7 @@ mod tests {
     #[test]
     fn cache_returns_same_result() {
         for _ in 0..3 {
-            assert_eq!(display_str("GridCraft"), "Grid Lab");
+            assert_eq!(display_str("GridCraft"), "GridSeed");
         }
     }
 }

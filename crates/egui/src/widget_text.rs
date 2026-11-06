@@ -1063,21 +1063,21 @@ mod davylabs_display_names {
                 f32::INFINITY,
                 crate::TextStyle::Body,
             );
-            assert_eq!(galley.text(), "About Photo Lab");
+            assert_eq!(galley.text(), "About PhotoSeed");
 
             let job = WidgetText::from(RichText::new("ArtCraft").strong()).into_layout_job(
                 ui.style(),
                 crate::FontSelection::Default,
                 crate::Align::Min,
             );
-            assert_eq!(job.text, "Davy Labs");
+            assert_eq!(job.text, "Papaya");
 
             let galley = ui.painter().layout_no_wrap(
                 "Deck Lab".to_owned(),
                 crate::FontId::proportional(12.0),
                 crate::Color32::WHITE,
             );
-            assert_eq!(galley.text(), "Power Lab");
+            assert_eq!(galley.text(), "PowerSeed");
 
             let mut buffer = String::from("PhotoCraft");
             let output = TextEdit::singleline(&mut buffer)
